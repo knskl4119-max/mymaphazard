@@ -2,6 +2,9 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <!-- 1. 検索エンジン（Google等）への登録を拒否する設定 -->
+    <meta name="robots" content="noindex,nofollow">
+    
     <title>みんなの不動産ハザードマップ</title>
     <!-- LeafletのCSS読み込み -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -38,7 +41,6 @@
             padding: 8px 15px;
             cursor: pointer;
         }
-        /* 追加: リスト用のデザイン */
         .property-item {
             display: flex;
             justify-content: space-between;
@@ -62,9 +64,59 @@
             border-radius: 3px;
             cursor: pointer;
         }
+
+        /* 3. パスワード保護用のオーバーレイ画面 */
+        #authOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 9999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+        }
+        .auth-box {
+            background: #222;
+            padding: 30px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        .auth-box input[type="password"] {
+            padding: 10px;
+            font-size: 16px;
+            width: 200px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+        .auth-box button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
+
+    <!-- パスワード認証オーバーレイ -->
+    <div id="authOverlay">
+        <div class="auth-box">
+            <h3>合言葉を入力してください</h3>
+            <input type="password" id="passInput" placeholder="パスワード">
+            <br>
+            <button onclick="checkPassword()">ログイン</button>
+            <p id="authError" style="color: #ff6666; display: none; margin-top: 10px; font-size: 0.9em;">パスワードが違います</p>
+        </div>
+    </div>
 
     <div id="sidebar">
         <h2>みんなの不動産ハザードマップ</h2>
@@ -82,15 +134,15 @@
 
     <div id="map"></div>
 
-    <!-- LeafletのJS読み込み -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
-    <!-- Firebase SDK (モジュラー版) の読み込み -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.5.2/firebase-app.js";
         import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.5.2/firebase-firestore.js";
 
-        // Firebase設定（いただいた内容をセット済み）
+        // ★★★ここに設定するパスワードを指定（好きなパスワードに変更すること）★★★
+        const APP_PASSWORD = "4187";
+
         const firebaseConfig = {
             apiKey: "AIzaSyAyag5QHHJtslMjM4JsvW7WKtMAQTEodcI",
             authDomain: "fudosan-66b86.firebaseapp.com",
@@ -101,30 +153,85 @@
             measurementId: "G-59BT0GBJ5C"
         };
 
-        // Firebaseの初期化
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // 1. マップの初期化（中心地：東京駅あたり、ズーム13）
-        const map = L.map('map').setView([35.681236, 139.767125], 13);
+        // パスワード判定処理
+        window.checkPassword = function() {
+            const input = document.getElementById('passInput').value;
+            if (input === APP_PASSWORD) {
+                document.getElementById('authOverlay').style.display = 'none';
+                initApp(); // パスワード一致後にアプリ初期化＆データ読み込みを開始
+            } else {
+                document.getElementById('authError').style.display = 'block';
+            }
+        };
 
-        // 2. 背景地図（国土地理院ベース）
-        L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
-            maxZoom: 18,
-            attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
-        }).addTo(map);
-
-        // 3. ハザードマップのレイヤー作成
-        const hazardLayer = L.tileLayer('https://disaportaldata.gsi.go.jp/raster/01_flood_l2_shinsuishin_data/{z}/{x}/{y}.png', {
-            maxZoom: 17,
-            minZoom: 2,
-            opacity: 0.6,
-            attribution: '<a href="https://disaportal.gsi.go.jp/">ハザードマップポータルサイト</a>'
+        // Enterキーでログインできるようにイベント追加
+        document.getElementById('passInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                window.checkPassword();
+            }
         });
 
-        // ハザードマップのON/OFF切り替え用フラグ
+        let map, hazardLayer, markersLayer;
         let isHazardOn = false;
+
+        // パスワード通過後にのみ動くメイン処理
+        function initApp() {
+            // 1. マップ初期化
+            map = L.map('map').setView([35.681236, 139.767125], 13);
+
+            // 2. 背景地図
+            L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+                maxZoom: 18,
+                attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
+            }).addTo(map);
+
+            // 3. ハザードマップ設定
+            hazardLayer = L.tileLayer('https://disaportaldata.gsi.go.jp/raster/01_flood_l2_shinsuishin_data/{z}/{x}/{y}.png', {
+                maxZoom: 17,
+                minZoom: 2,
+                opacity: 0.6,
+                attribution: '<a href="https://disaportal.gsi.go.jp/">ハザードマップポータルサイト</a>'
+            });
+
+            markersLayer = L.layerGroup().addTo(map);
+
+            // Firebaseリアルタイムデータ取得を開始
+            onSnapshot(collection(db, "properties"), (snapshot) => {
+                markersLayer.clearLayers();
+                const listContainer = document.getElementById('listContainer');
+                listContainer.innerHTML = '';
+
+                snapshot.forEach((docSnap) => {
+                    const prop = docSnap.data();
+                    const id = docSnap.id;
+
+                    const marker = L.marker([prop.lat, prop.lon])
+                        .bindPopup(`<b>検討物件</b><br>${prop.address}<br>メモ: ${prop.memo || 'なし'}<br><a href="https://www.google.com/maps/search/?api=1&query=${prop.lat},${prop.lon}" target="_blank">Googleマップで見る</a>`);
+                    markersLayer.addLayer(marker);
+
+                    const item = document.createElement('div');
+                    item.className = 'property-item';
+                    item.innerHTML = `
+                        <span onclick="window.focusMap(${prop.lat}, ${prop.lon})">${prop.address} (${prop.memo || 'メモなし'})</span>
+                        <button class="delete-btn" data-id="${id}">削除</button>
+                    `;
+                    listContainer.appendChild(item);
+                });
+
+                document.querySelectorAll('.delete-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const id = e.target.getAttribute('data-id');
+                        await deleteDoc(doc(db, "properties", id));
+                    });
+                });
+            });
+        }
+
         window.toggleHazardMap = function() {
+            if (!map) return;
             const btn = document.getElementById('hazardBtn');
             if (isHazardOn) {
                 map.removeLayer(hazardLayer);
@@ -139,50 +246,12 @@
             }
         };
 
-        // ピンを管理するレイヤー
-        const markersLayer = L.layerGroup().addTo(map);
-
-        // ★Firebaseからデータをリアルタイムで読み込んで画面に表示する処理
-        onSnapshot(collection(db, "properties"), (snapshot) => {
-            markersLayer.clearLayers();
-            const listContainer = document.getElementById('listContainer');
-            listContainer.innerHTML = '';
-
-            snapshot.forEach((docSnap) => {
-                const prop = docSnap.data();
-                const id = docSnap.id;
-
-                // ピンを立てる
-                const marker = L.marker([prop.lat, prop.lon])
-                    .bindPopup(`<b>検討物件</b><br>${prop.address}<br>メモ: ${prop.memo || 'なし'}<br><a href="https://www.google.com/maps/search/?api=1&query=${prop.lat},${prop.lon}" target="_blank">Googleマップで見る</a>`);
-                markersLayer.addLayer(marker);
-
-                // リストに追加
-                const item = document.createElement('div');
-                item.className = 'property-item';
-                item.innerHTML = `
-                    <span onclick="window.focusMap(${prop.lat}, ${prop.lon})">${prop.address} (${prop.memo || 'メモなし'})</span>
-                    <button class="delete-btn" data-id="${id}">削除</button>
-                `;
-                listContainer.appendChild(item);
-            });
-
-            // 削除ボタンの処理
-            document.querySelectorAll('.delete-btn').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
-                    const id = e.target.getAttribute('data-id');
-                    await deleteDoc(doc(db, "properties", id)); // Firebaseから削除
-                });
-            });
-        });
-
-        // マップを移動させる関数
         window.focusMap = function(lat, lon) {
-            map.setView([lat, lon], 16);
+            if (map) map.setView([lat, lon], 16);
         };
 
-        // 4. 住所入力から緯度経度を検索してFirebaseに保存する
         window.searchAndSaveAddress = async function() {
+            if (!map) return;
             const address = document.getElementById('addressInput').value;
             const memo = document.getElementById('memoInput').value;
 
@@ -197,12 +266,11 @@
                 .then(response => response.json())
                 .then(async data => {
                     if (data && data.length > 0) {
-                        const coordinates = data[0].geometry.coordinates; // [lon, lat]
+                        const coordinates = data[0].geometry.coordinates;
                         const lat = coordinates[1];
                         const lon = coordinates[0];
                         const computedAddress = data[0].properties.title;
 
-                        // ★Firebaseにデータを保存
                         await addDoc(collection(db, "properties"), {
                             address: computedAddress,
                             lat: lat,
@@ -210,11 +278,9 @@
                             memo: memo
                         });
 
-                        // 入力欄をクリア
                         document.getElementById('addressInput').value = '';
                         document.getElementById('memoInput').value = '';
 
-                        // マップをその場所に移動
                         map.setView([lat, lon], 16);
                     } else {
                         alert('住所が見つかりませんでした。正確な住所を入力してください。');
