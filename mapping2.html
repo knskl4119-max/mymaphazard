@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>みんなの不動産ハザードマップ</title>
+    <!-- LeafletのCSS読み込み -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: sans-serif;
+            display: flex;
+            height: 100vh;
+            flex-direction: column;
+        }
+        #sidebar {
+            width: 100%;
+            padding: 15px;
+            background: #f4f4f4;
+            box-sizing: border-box;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            z-index: 1000;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+        #map {
+            flex-grow: 1;
+            width: 100%;
+        }
+        input[type="text"] {
+            width: 250px;
+            padding: 8px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button {
+            padding: 8px 15px;
+            cursor: pointer;
+        }
+        /* 追加: リスト用のデザイン */
+        .property-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #fff;
+            padding: 8px 10px;
+            margin-bottom: 5px;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .property-item span {
+            cursor: pointer;
+            color: #0066cc;
+            text-decoration: underline;
+        }
+        .delete-btn {
+            background-color: #ff4d4d;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h2>みんなの不動産ハザードマップ</h2>
+        <div>
+            <input type="text" id="addressInput" placeholder="例: 東京都新宿区西新宿2-8-1">
+            <input type="text" id="memoInput" placeholder="メモ（例: 家賃12万）" style="width: 150px;">
+            <button onclick="searchAndSaveAddress()">物件を共有してピン留め</button>
+            <button onclick="toggleHazardMap()" id="hazardBtn" style="margin-left: 20px; background-color: #ffcccc;">ハザードマップ: OFF</button>
+        </div>
+        <div style="margin-top: 10px;">
+            <strong>共有物件一覧:</strong>
+            <div id="listContainer"></div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <!-- LeafletのJS読み込み -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Firebase SDK (モジュラー版) の読み込み -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.5.2/firebase-app.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.5.2/firebase-firestore.js";
+
+        // Firebase設定（いただいた内容をセット済み）
+        const firebaseConfig = {
+            apiKey: "AIzaSyAyag5QHHJtslMjM4JsvW7WKtMAQTEodcI",
+            authDomain: "fudosan-66b86.firebaseapp.com",
+            projectId: "fudosan-66b86",
+            storageBucket: "fudosan-66b86.firebasestorage.app",
+            messagingSenderId: "48393275114",
+            appId: "1:48393275114:web:2cb795277be188cd04f993",
+            measurementId: "G-59BT0GBJ5C"
+        };
+
+        // Firebaseの初期化
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // 1. マップの初期化（中心地：東京駅あたり、ズーム13）
+        const map = L.map('map').setView([35.681236, 139.767125], 13);
+
+        // 2. 背景地図（国土地理院ベース）
+        L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+            maxZoom: 18,
+            attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
+        }).addTo(map);
+
+        // 3. ハザードマップのレイヤー作成
+        const hazardLayer = L.tileLayer('https://disaportaldata.gsi.go.jp/raster/01_flood_l2_shinsuishin_data/{z}/{x}/{y}.png', {
+            maxZoom: 17,
+            minZoom: 2,
+            opacity: 0.6,
+            attribution: '<a href="https://disaportal.gsi.go.jp/">ハザードマップポータルサイト</a>'
+        });
+
+        // ハザードマップのON/OFF切り替え用フラグ
+        let isHazardOn = false;
+        window.toggleHazardMap = function() {
+            const btn = document.getElementById('hazardBtn');
+            if (isHazardOn) {
+                map.removeLayer(hazardLayer);
+                btn.style.backgroundColor = '#ffcccc';
+                btn.innerText = 'ハザードマップ: OFF';
+                isHazardOn = false;
+            } else {
+                hazardLayer.addTo(map);
+                btn.style.backgroundColor = '#ccffcc';
+                btn.innerText = 'ハザードマップ: ON';
+                isHazardOn = true;
+            }
+        };
+
+        // ピンを管理するレイヤー
+        const markersLayer = L.layerGroup().addTo(map);
+
+        // ★Firebaseからデータをリアルタイムで読み込んで画面に表示する処理
+        onSnapshot(collection(db, "properties"), (snapshot) => {
+            markersLayer.clearLayers();
+            const listContainer = document.getElementById('listContainer');
+            listContainer.innerHTML = '';
+
+            snapshot.forEach((docSnap) => {
+                const prop = docSnap.data();
+                const id = docSnap.id;
+
+                // ピンを立てる
+                const marker = L.marker([prop.lat, prop.lon])
+                    .bindPopup(`<b>検討物件</b><br>${prop.address}<br>メモ: ${prop.memo || 'なし'}<br><a href="https://www.google.com/maps/search/?api=1&query=${prop.lat},${prop.lon}" target="_blank">Googleマップで見る</a>`);
+                markersLayer.addLayer(marker);
+
+                // リストに追加
+                const item = document.createElement('div');
+                item.className = 'property-item';
+                item.innerHTML = `
+                    <span onclick="window.focusMap(${prop.lat}, ${prop.lon})">${prop.address} (${prop.memo || 'メモなし'})</span>
+                    <button class="delete-btn" data-id="${id}">削除</button>
+                `;
+                listContainer.appendChild(item);
+            });
+
+            // 削除ボタンの処理
+            document.querySelectorAll('.delete-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const id = e.target.getAttribute('data-id');
+                    await deleteDoc(doc(db, "properties", id)); // Firebaseから削除
+                });
+            });
+        });
+
+        // マップを移動させる関数
+        window.focusMap = function(lat, lon) {
+            map.setView([lat, lon], 16);
+        };
+
+        // 4. 住所入力から緯度経度を検索してFirebaseに保存する
+        window.searchAndSaveAddress = async function() {
+            const address = document.getElementById('addressInput').value;
+            const memo = document.getElementById('memoInput').value;
+
+            if (!address) {
+                alert('住所を入力してください');
+                return;
+            }
+
+            const url = `https://msearch.gsi.go.jp/address-search/AddressSearch?q=${encodeURIComponent(address)}`;
+
+            fetch(url)
+                .then(response => response.json())
+                .then(async data => {
+                    if (data && data.length > 0) {
+                        const coordinates = data[0].geometry.coordinates; // [lon, lat]
+                        const lat = coordinates[1];
+                        const lon = coordinates[0];
+                        const computedAddress = data[0].properties.title;
+
+                        // ★Firebaseにデータを保存
+                        await addDoc(collection(db, "properties"), {
+                            address: computedAddress,
+                            lat: lat,
+                            lon: lon,
+                            memo: memo
+                        });
+
+                        // 入力欄をクリア
+                        document.getElementById('addressInput').value = '';
+                        document.getElementById('memoInput').value = '';
+
+                        // マップをその場所に移動
+                        map.setView([lat, lon], 16);
+                    } else {
+                        alert('住所が見つかりませんでした。正確な住所を入力してください。');
+                    }
+                })
+                .catch(error => {
+                    console.error('エラー:', error);
+                    alert('住所の検索に失敗しました。');
+                });
+        };
+    </script>
+</body>
+</html>
