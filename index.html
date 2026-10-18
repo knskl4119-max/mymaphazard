@@ -2,13 +2,18 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <!-- 1. 検索エンジン（Google等）への登録を拒否する設定 -->
+    <!-- 1. スマホ表示（レスポンシブ）対応タグ -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 検索エンジン（Google等）拒否 -->
     <meta name="robots" content="noindex,nofollow">
     
     <title>みんなの不動産ハザードマップ</title>
     <!-- LeafletのCSS読み込み -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
+        * {
+            box-sizing: border-box;
+        }
         body {
             margin: 0;
             padding: 0;
@@ -19,27 +24,60 @@
         }
         #sidebar {
             width: 100%;
-            padding: 15px;
+            padding: 12px;
             background: #f4f4f4;
-            box-sizing: border-box;
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
             z-index: 1000;
-            max-height: 250px;
+            max-height: 40vh;
             overflow-y: auto;
+        }
+        #sidebar h2 {
+            margin: 0 0 10px 0;
+            font-size: 1.1rem;
         }
         #map {
             flex-grow: 1;
             width: 100%;
         }
-        input[type="text"] {
-            width: 250px;
-            padding: 8px;
-            margin-right: 10px;
+        .input-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
             margin-bottom: 10px;
         }
+        .input-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        input[type="text"] {
+            padding: 8px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        #addressInput {
+            flex: 2 1 180px;
+        }
+        #memoInput {
+            flex: 1 1 100px;
+        }
+        .btn-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
         button {
-            padding: 8px 15px;
+            padding: 8px 12px;
+            font-size: 14px;
             cursor: pointer;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: #ffffff;
+            flex: 1 1 auto;
+        }
+        button#hazardBtn {
+            background-color: #ffcccc;
         }
         .property-item {
             display: flex;
@@ -50,22 +88,27 @@
             margin-bottom: 5px;
             border-radius: 4px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            font-size: 13px;
         }
         .property-item span {
             cursor: pointer;
             color: #0066cc;
             text-decoration: underline;
+            word-break: break-all;
+            margin-right: 8px;
         }
         .delete-btn {
             background-color: #ff4d4d;
             color: white;
             border: none;
-            padding: 5px 10px;
+            padding: 6px 10px;
             border-radius: 3px;
             cursor: pointer;
+            white-space: nowrap;
+            flex: 0 0 auto;
         }
 
-        /* 3. パスワード保護用のオーバーレイ画面 */
+        /* パスワード認証画面（スマホ対応） */
         #authOverlay {
             position: fixed;
             top: 0;
@@ -78,24 +121,28 @@
             justify-content: center;
             align-items: center;
             color: white;
+            padding: 20px;
         }
         .auth-box {
             background: #222;
-            padding: 30px;
+            padding: 25px;
             border-radius: 8px;
             text-align: center;
             box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            width: 100%;
+            max-width: 320px;
         }
         .auth-box input[type="password"] {
             padding: 10px;
             font-size: 16px;
-            width: 200px;
-            margin-bottom: 10px;
+            width: 100%;
+            margin-bottom: 12px;
             border-radius: 4px;
             border: 1px solid #ccc;
         }
         .auth-box button {
-            padding: 10px 20px;
+            width: 100%;
+            padding: 10px;
             font-size: 16px;
             background-color: #0066cc;
             color: white;
@@ -107,26 +154,29 @@
 </head>
 <body>
 
-    <!-- パスワード認証オーバーレイ -->
+    <!-- パスワード認証画面 -->
     <div id="authOverlay">
         <div class="auth-box">
-            <h3>合言葉を入力してください</h3>
+            <h3 style="margin-top:0;">合言葉を入力</h3>
             <input type="password" id="passInput" placeholder="パスワード">
-            <br>
             <button onclick="checkPassword()">ログイン</button>
-            <p id="authError" style="color: #ff6666; display: none; margin-top: 10px; font-size: 0.9em;">パスワードが違います</p>
+            <p id="authError" style="color: #ff6666; display: none; margin-top: 10px; font-size: 0.85em;">パスワードが違います</p>
         </div>
     </div>
 
     <div id="sidebar">
         <h2>みんなの不動産ハザードマップ</h2>
-        <div>
-            <input type="text" id="addressInput" placeholder="例: 東京都新宿区西新宿2-8-1">
-            <input type="text" id="memoInput" placeholder="メモ（例: 家賃12万）" style="width: 150px;">
-            <button onclick="searchAndSaveAddress()">物件を共有してピン留め</button>
-            <button onclick="toggleHazardMap()" id="hazardBtn" style="margin-left: 20px; background-color: #ffcccc;">ハザードマップ: OFF</button>
+        <div class="input-container">
+            <div class="input-row">
+                <input type="text" id="addressInput" placeholder="例: 東京都新宿区西新宿2-8-1">
+                <input type="text" id="memoInput" placeholder="メモ（家賃等）">
+            </div>
+            <div class="btn-row">
+                <button onclick="searchAndSaveAddress()">物件を保存</button>
+                <button onclick="toggleHazardMap()" id="hazardBtn">ハザードマップ: OFF</button>
+            </div>
         </div>
-        <div style="margin-top: 10px;">
+        <div>
             <strong>共有物件一覧:</strong>
             <div id="listContainer"></div>
         </div>
@@ -140,8 +190,8 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.5.2/firebase-app.js";
         import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.5.2/firebase-firestore.js";
 
-        // ★★★ここに設定するパスワードを指定（好きなパスワードに変更すること）★★★
-        const APP_PASSWORD = "4187";
+        // ★設定するパスワード（必要に応じて書き換え）
+        const APP_PASSWORD = "1234";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAyag5QHHJtslMjM4JsvW7WKtMAQTEodcI",
@@ -161,13 +211,12 @@
             const input = document.getElementById('passInput').value;
             if (input === APP_PASSWORD) {
                 document.getElementById('authOverlay').style.display = 'none';
-                initApp(); // パスワード一致後にアプリ初期化＆データ読み込みを開始
+                initApp();
             } else {
                 document.getElementById('authError').style.display = 'block';
             }
         };
 
-        // Enterキーでログインできるようにイベント追加
         document.getElementById('passInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 window.checkPassword();
@@ -177,18 +226,14 @@
         let map, hazardLayer, markersLayer;
         let isHazardOn = false;
 
-        // パスワード通過後にのみ動くメイン処理
         function initApp() {
-            // 1. マップ初期化
             map = L.map('map').setView([35.681236, 139.767125], 13);
 
-            // 2. 背景地図
             L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
                 maxZoom: 18,
                 attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
             }).addTo(map);
 
-            // 3. ハザードマップ設定
             hazardLayer = L.tileLayer('https://disaportaldata.gsi.go.jp/raster/01_flood_l2_shinsuishin_data/{z}/{x}/{y}.png', {
                 maxZoom: 17,
                 minZoom: 2,
@@ -198,7 +243,6 @@
 
             markersLayer = L.layerGroup().addTo(map);
 
-            // Firebaseリアルタイムデータ取得を開始
             onSnapshot(collection(db, "properties"), (snapshot) => {
                 markersLayer.clearLayers();
                 const listContainer = document.getElementById('listContainer');
